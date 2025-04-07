@@ -1,0 +1,57 @@
+---
+- name: Déployer HAProxy dans Docker
+  hosts: CiCd
+  become: yes
+
+  vars:
+    haproxy_image: "haproxy:latest"
+    haproxy_container_name: "haproxy"
+    haproxy_config_path: "/etc/haproxy/haproxy.cfg"
+    haproxy_host_port: 80
+    haproxy_stats_port: 8404
+
+  tasks:
+    - #name: Installer Docker
+      #ansible.builtin.include_role:
+      #  name: geerlingguy.docker
+
+    - name: Créer le fichier de configuration HAProxy
+      copy:
+        dest: "{{ haproxy_config_path }}"
+        content: |
+          defaults
+            timeout connect 5s
+            timeout client 1m
+            timeout server 1m
+
+          frontend http-in
+            bind *:80
+            default_backend servers
+
+          backend servers
+            balance roundrobin
+            server weba 192.168.1.11:8080 check
+            server webb 192.168.1.12:8080 check
+
+          listen stats
+            bind *:8404
+            stats enable
+            stats uri /stats
+
+    - name: Lancer le conteneur HAProxy
+      community.docker.docker_container:
+        name: "{{ haproxy_container_name }}"
+        image: "{{ haproxy_image }}"
+        ports:
+          - "{{ haproxy_host_port }}:80"
+          - "{{ haproxy_stats_port }}:8404"
+        volumes:
+          - "{{ haproxy_config_path }}:/usr/local/etc/haproxy/haproxy.cfg"
+        restart_policy: unless-stopped
+
+    - name: Vérifier le conteneur HAProxy
+      command: docker ps -f name={{ haproxy_container_name }}
+      register: container_status
+
+    - debug:
+        var: container_status.stdout_lines

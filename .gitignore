@@ -1,0 +1,4 @@
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+infra_AWS/terraform.tfstate.backup

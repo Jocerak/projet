@@ -1,0 +1,19 @@
+- name: Déployer Prometheus dans Docker
+  hosts: all
+  become: true
+
+  roles:
+    - role: wreiner.prometheus-docker
+      vars:
+        prometheus_docker__listen_address: "{{ ansible_host }}"  # Adresse IP sur laquelle Prometheus écoutera
+        prometheus_docker__prometheus_version: "v2.43.0"         # Version de Prometheus à installer
+        prometheus_docker__node_exporter_targets:
+          - "192.168.1.11:9100@node-exporter"                   # Cibles Node Exporter
+        prometheus_docker__alertmanager_targets:
+          - "192.168.1.12:9093"                                 # Cibles Alertmanager
+        prometheus_docker__additional_scrape_configs:
+          - job_name: 'custom-job'
+            scrape_interval: 15s
+            static_configs:
+              - targets:
+                  - '192.168.1.13:9090'

@@ -1,0 +1,27 @@
+- name: Déploiement Jenkins dans Docker
+  hosts: aCiCd
+  become: true
+
+  tasks:
+    - name: Installer Docker
+      ansible.builtin.include_role:
+        name: geerlingguy.docker
+
+    - name: Créer le volume Jenkins
+      community.docker.docker_volume:
+        name: jenkins_data
+
+    - name: Lancer le conteneur Jenkins
+      community.docker.docker_container:
+        name: jenkins
+        image: jenkins/jenkins:lts-jdk17
+        ports:
+          - "8080:8080"
+          - "50000:50000"
+        volumes:
+          - jenkins_data:/var/jenkins_home
+          - /var/run/docker.sock:/var/run/docker.sock
+        env:
+          JENKINS_ADMIN_ID: admin
+          JENKINS_ADMIN_PASSWORD: "secret123!"
+        restart_policy: unless-stopped

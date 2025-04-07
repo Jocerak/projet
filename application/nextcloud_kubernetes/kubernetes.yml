@@ -1,0 +1,12 @@
+---
+- name: Install K3s on Master
+  remote_user: ubuntu
+  hosts: application
+  become: yes
+
+  tasks:
+    - name: Install K3s server
+      shell: |
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
+      args:
+        executable: /bin/bash

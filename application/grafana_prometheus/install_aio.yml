@@ -1,0 +1,25 @@
+- name: Déploiement Grafana OTEL-LGTM
+  hosts: monitoring
+  become: true
+
+  tasks:
+    - name: Lancer le conteneur OTEL-LGTM
+      community.docker.docker_container:
+        name: otel-lgtm
+        image: grafana/otel-lgtm:latest
+        ports:
+          - "3000:3000"   # Grafana
+          - "4317:4317"   # OTel gRPC
+          - "4318:4318"   # OTel HTTP
+        volumes:
+          - "otel_data:/var/lib/grafana"
+        restart_policy: unless-stopped
+        detach: true
+
+    - name: Vérifier le statut du conteneur
+      command: docker ps -f name=otel-lgtm
+      register: container_status
+      changed_when: false
+
+    - debug:
+        var: container_status.stdout_lines

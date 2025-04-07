@@ -1,0 +1,47 @@
+---
+- name: Déploiement HAProxy
+  hosts: CiCd
+  vars:
+    container_name: haproxy-lb
+    haproxy_image: haproxy:2.8.1-alpine
+    http_port: 80
+    stats_port: 8404
+    stats_user: admin
+    stats_password: "S3cur3P@ss!"
+    backend_servers:
+      - { name: web1, ip: 192.168.1.11, port: 8080 }
+      - { name: web2, ip: 192.168.1.12, port: 8080 }
+
+  tasks:
+    - name: Créer le répertoire de configuration
+      file:
+        path: /etc/haproxy
+        state: directory
+
+    - name: Déployer la configuration HAProxy
+      template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+      notify: redémarrer haproxy
+
+    - name: Lancer le conteneur HAProxy
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ haproxy_image }}"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "{{ http_port }}:{{ http_port }}"
+          - "{{ stats_port }}:{{ stats_port }}"
+        volumes:
+          - "/etc/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg"
+        labels:
+          traefik.enable: "false"
+        env:
+          TZ: "Europe/Paris"
+
+  handlers:
+    - name: redémarrer haproxy
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: restarted

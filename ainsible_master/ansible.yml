@@ -1,0 +1,75 @@
+---
+- name: Installer Ansible sur le Master si nécessaire
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Mettre à jour les paquets
+      apt:
+        update_cache: yes
+
+    - name: Installer Ansible
+      apt:
+        name: ansible
+        state: present
+
+- name: Générer une paire de clés SSH sur localhost
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Générer une paire de clés SSH
+      community.crypto.openssh_keypair:
+        path: /tmp/id_rsa_ansible
+        type: rsa
+        size: 4096
+        force: true
+      register: ssh_key
+
+    - name: Sauvegarder la clé publique pour les autres hôtes
+      set_fact:
+        generated_public_key: "{{ ssh_key.public_key }}"
+
+- name: Déployer la clé publique SSH sur tous les hôtes
+  hosts: all
+  become: true
+  tasks:
+    - name: Ajouter la clé publique dans authorized_keys
+      authorized_key:
+        user: ubuntu
+        key: "{{ hostvars['localhost']['generated_public_key'] }}"
+
+- name: Installer Docker sur tous les hôtes
+  hosts: all
+  become: true
+  tasks:
+    - name: Installer les dépendances Docker
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+        update_cache: true
+
+    - name: Ajouter la clé GPG officielle de Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Ajouter le dépôt Docker
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Installer Docker CE
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: true
+
+    - name: Démarrer et activer Docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started

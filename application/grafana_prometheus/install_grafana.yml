@@ -1,0 +1,15 @@
+- name: Déployer Grafana dans Docker
+  hosts: all
+  become: true
+
+  roles:
+    - role: wangsha.docker-grafana
+      vars:
+        docker_grafana_ports:
+          - "3000:3000"  # Expose le port 3000 pour Grafana
+        docker_grafana_env:
+          GF_SECURITY_ADMIN_USER: admin  # Nom d'utilisateur admin
+          GF_SECURITY_ADMIN_PASSWORD: admin123  # Mot de passe admin
+          GF_SERVER_ROOT_URL: http://localhost:3000  # URL racine du serveur Grafana
+        docker_grafana_directory_volumes:
+          - "/opt/grafana/data:/var/lib/grafana"  # Volume persistant pour les données Grafana
