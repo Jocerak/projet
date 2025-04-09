@@ -1,5 +1,5 @@
 - name: Déploiement Jenkins dans Docker
-  hosts: aCiCd
+  hosts: Pipeline
   become: true
 
   tasks:

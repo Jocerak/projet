@@ -1,7 +1,7 @@
 ---
 - name: Install K3s on Master
   remote_user: ubuntu
-  hosts: application
+  hosts: Application
   become: yes
 
   tasks:

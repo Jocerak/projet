@@ -9,7 +9,7 @@
 
   tasks:
 
-    - name: 🔷 Étape 1 : Récupérer l'IP publique du Master depuis hosts.ini
+    - name: "🔷 Étape 1 : Récupérer l'IP publique du Master depuis hosts.ini"
       shell: |
         awk '/\[{{ master_group }}\]/{flag=1; next} /^\[/{flag=0} flag && /ansible_host=/' hosts.ini \
         | head -n 1 | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p'
@@ -24,11 +24,11 @@
     - set_fact:
         master_ip: "{{ master_ip_result.stdout }}"
 
-    - name: 🔷 Étape 2 : Créer le dossier ~/task sur le Master
+    - name: "🔷 Étape 2 : Créer le dossier ~/task sur le Master"
       shell: ssh ubuntu@{{ master_ip }} "mkdir -p {{ remote_task_dir }}"
       delegate_to: localhost
 
-    - name: 🔷 Étape 2.5 : Générer une paire de clés SSH sur le Master (si absente)
+    - name: "🔷 Étape 2.5 : Générer une paire de clés SSH sur le Master (si absente)"
       shell: |
         ssh ubuntu@{{ master_ip }} '
         if [[ ! -f ~/.ssh/id_rsa ]]; then
@@ -38,7 +38,7 @@
         fi'
       delegate_to: localhost
 
-    - name: 🔷 Étape 2.6 : Récupération de la clé privée/public du Master
+    - name: "🔷 Étape 2.6 : Récupération de la clé privée/public du Master"
       block:
         - name: 📥 Récupérer la clé privée
           shell: scp ubuntu@{{ master_ip }}:~/.ssh/id_rsa {{ ssh_private_key_path }}
@@ -54,19 +54,19 @@
             mode: '0600'
           delegate_to: localhost
 
-    - name: 🔷 Étape 3 : Créer le dossier application sur le Master
+    - name: "🔷 Étape 3 : Créer le dossier application sur le Master"
       shell: ssh ubuntu@{{ master_ip }} "mkdir -p {{ remote_task_dir }}/application"
       delegate_to: localhost
 
-    - name: 🔷 Étape 3.1 : Copier les fichiers hosts.ini et ansible.yml vers le Master
+    - name: "🔷 Étape 3.1 : Copier les fichiers hosts.ini et ansible.yml vers le Master"
       shell: scp hosts.ini ansible.yml ubuntu@{{ master_ip }}:{{ remote_task_dir }}
       delegate_to: localhost
 
-    - name: 🔷 Étape 3.2 : Copier le dossier application/ vers le Master
-      shell: scp -r application/* ubuntu@{{ master_ip }}:{{ remote_task_dir }}/application/
+    - name: "🔷 Étape 3.2 : Copier le dossier application/ vers le Master"
+      shell: scp -r ../../application/* ubuntu@{{ master_ip }}:{{ remote_task_dir }}/application/
       delegate_to: localhost
 
-    - name: 🔷 Étape 4 : Distribution de la clé publique du Master vers tous les hôtes
+    - name: "🔷 Étape 4 : Distribution de la clé publique du Master vers tous les hôtes"
       shell: |
         ip=$(echo "{{ item }}" | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p')
         user=$(echo "{{ item }}" | sed -n 's/.*ansible_user=\([^ ]*\).*/\1/p')
@@ -77,7 +77,7 @@
       with_lines: cat hosts.ini
       delegate_to: localhost
 
-    - name: 🔷 Étape 5 : Installation d'Ansible sur le Master (si manquant)
+    - name: "🔷 Étape 5 : Installation d'Ansible sur le Master (si manquant)"
       shell: |
         ssh ubuntu@{{ master_ip }} '
         if ! command -v ansible-playbook >/dev/null; then
@@ -90,7 +90,7 @@
         fi'
       delegate_to: localhost
 
-    - name: 🧹 Étape 6 : Nettoyage des clés SSH récupérées
+    - name: "🧹 Étape 6 : Nettoyage des clés SSH récupérées"
       file:
         path: "{{ item }}"
         state: absent

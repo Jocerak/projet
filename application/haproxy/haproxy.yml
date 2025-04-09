@@ -1,6 +1,6 @@
 ---
 - name: Déploiement HAProxy
-  hosts: CiCd
+  hosts: Pipeline
   vars:
     container_name: haproxy-lb
     haproxy_image: haproxy:2.8.1-alpine

@@ -1,5 +1,5 @@
 - name: Déploiement Grafana OTEL-LGTM
-  hosts: monitoring
+  hosts: Supervision
   become: true
 
   tasks:

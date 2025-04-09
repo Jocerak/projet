@@ -1,0 +1,91 @@
+---
+- name: Déploiement automatique depuis le Master
+  hosts: Master
+  gather_facts: false
+  vars:
+    remote_task_path: ~/task
+    local_key_private: ~/.ssh/id_rsa_master
+    local_key_public: ~/.ssh/id_rsa_master.pub
+
+  tasks:
+
+    - name: "🔷 Étape 1 : Créer le dossier ~/task sur le Master"
+      file:
+        path: "{{ remote_task_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: "🔷 Étape 2 : Générer une paire de clés SSH si absente"
+      shell: |
+        if [[ ! -f ~/.ssh/id_rsa ]]; then
+          ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: "🔷 Étape 3 : Copier les fichiers hosts.ini et ansible.yml vers le Master"
+      copy:
+        src: "{{ item }}"
+        dest: "{{ remote_task_path }}/"
+      loop:
+        - hosts.ini
+      
+
+    - name: "🔷 Étape 4 : Créer le répertoire application/ côté Master (s'il n'existe pas)"
+      file:
+        path: "{{ remote_task_path }}/application/"
+        state: directory
+        mode: '0755'
+
+    - name: "🔷 Étape 5 : Transférer le dossier application/ vers le Master"
+      delegate_to: localhost
+      shell: scp -r ../../application/* ubuntu@{{ hostvars[inventory_hostname].ansible_host }}:{{ remote_task_path }}/application/
+      args:
+        executable: /bin/bash
+
+    - name: "🔷 Étape 6 : Récupérer la clé privée du Master"
+      fetch:
+        src: ~/.ssh/id_rsa
+        dest: "{{ local_key_private }}"
+        flat: yes
+        fail_on_missing: yes
+
+    - name: "🔷 Étape 7 : Récupérer la clé publique du Master"
+      fetch:
+        src: ~/.ssh/id_rsa.pub
+        dest: "{{ local_key_public }}"
+        flat: yes
+        fail_on_missing: yes
+
+    - name: "🔷 Étape 8 : Copier la clé publique du Master vers tous les hôtes"
+      shell: ssh-copy-id -i {{ local_key_public }} -o StrictHostKeyChecking=no {{ hostvars[item].ansible_user | default('ubuntu') }}@{{ hostvars[item].ansible_host }}
+      loop: "{{ groups['Application'] + groups['Pipeline'] + groups['Supervision'] }}"
+      delegate_to: localhost
+      ignore_errors: true
+
+    - name: "🔷 Étape 9 : Installer Ansible sur le Master si nécessaire"
+      become: true
+      shell: |
+        if ! command -v ansible-playbook >/dev/null; then
+          apt update -qq
+          apt install -yqq software-properties-common
+          add-apt-repository --yes --update ppa:ansible/ansible
+          apt install -yqq ansible
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: "🔷 Étape 10 : Ajouter les known_hosts pour tous les hôtes"
+      shell: |
+        grep ansible_host {{ remote_task_path }}/hosts.ini | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p' | xargs -n1 ssh-keyscan -H >> ~/.ssh/known_hosts
+      args:
+        executable: /bin/bash
+
+    - name: "🔷 Étape 11 : Nettoyage des clés SSH locales"
+      delegate_to: localhost
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ local_key_private }}"
+        - "{{ local_key_public }}"

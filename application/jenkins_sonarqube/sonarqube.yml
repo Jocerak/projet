@@ -1,5 +1,5 @@
 - name: Déploiement SonarQube avec Docker
-  hosts: CiCd
+  hosts: Pipeline
   become: true
   vars:
     sonarqube_version: "10.4.1-community"
