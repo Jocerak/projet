@@ -29,19 +29,25 @@
         dest: "{{ remote_task_path }}/"
       loop:
         - hosts.ini
-      
+        #- ansible.yml
 
-    - name: "🔷 Étape 4 : Créer le répertoire application/ côté Master (s'il n'existe pas)"
-      file:
-        path: "{{ remote_task_path }}/application/"
-        state: directory
+    # - name: "🔷 Étape 4 : Créer le répertoire application/ côté Master (s'il n'existe pas)"
+    #   file:
+    #     path: "{{ remote_task_path }}/application/"
+    #     state: directory
+    #     mode: '0755'
+
+    # - name: "🔷 Étape 5 : Transférer le dossier application/ vers le Master"
+    #   delegate_to: localhost
+    #   shell: scp -r ../../application/* ubuntu@{{ hostvars[inventory_hostname].ansible_host }}:{{ remote_task_path }}/application/
+    #   args:
+    #     executable: /bin/bash
+
+    - name: "Etape 4+5: Copier application vers le serveur"
+      copy:
+        src: ../../application
+        dest: "{{ remote_task_path }}"
         mode: '0755'
-
-    - name: "🔷 Étape 5 : Transférer le dossier application/ vers le Master"
-      delegate_to: localhost
-      shell: scp -r ../../application/* ubuntu@{{ hostvars[inventory_hostname].ansible_host }}:{{ remote_task_path }}/application/
-      args:
-        executable: /bin/bash
 
     - name: "🔷 Étape 6 : Récupérer la clé privée du Master"
       fetch:
@@ -87,5 +93,5 @@
         path: "{{ item }}"
         state: absent
       loop:
-        - "{{ local_key_private }}"
+#       - "{{ local_key_private }}"
         - "{{ local_key_public }}"

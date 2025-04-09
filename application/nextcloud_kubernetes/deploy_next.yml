@@ -1,0 +1,16 @@
+---
+- name: Déploiement automatique depuis le Master
+  hosts: Application
+  become: true
+  tasks:
+    - name: "copier le fichier de deployement"
+      copy:
+        src: "./kub_nextcloud.yml"
+        dest: "~/ubuntu/kub_nextcloud.yml"
+        mode: '0755'
+
+    - name: "executer le deployement"
+      command: "kubectl apply -f ~/ubuntu/kub_nextcloud.yml"
+
+
+
