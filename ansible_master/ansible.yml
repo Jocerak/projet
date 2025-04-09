@@ -1,0 +1,100 @@
+- name: Déploiement initial avec génération de clé et distribution
+  hosts: localhost
+  gather_facts: no
+  vars:
+    master_group: "Master"
+    ssh_private_key_path: "~/.ssh/id_rsa_master"
+    ssh_public_key_path: "~/.ssh/id_rsa_master.pub"
+    remote_task_dir: "/home/ubuntu/task"
+
+  tasks:
+
+    - name: 🔷 Étape 1 : Récupérer l'IP publique du Master depuis hosts.ini
+      shell: |
+        awk '/\[{{ master_group }}\]/{flag=1; next} /^\[/{flag=0} flag && /ansible_host=/' hosts.ini \
+        | head -n 1 | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p'
+      register: master_ip_result
+      changed_when: false
+
+    - name: ✅ Vérifier que l'IP du Master a été récupérée
+      fail:
+        msg: "❌ Impossible d'extraire l'IP publique du Master."
+      when: master_ip_result.stdout == ""
+
+    - set_fact:
+        master_ip: "{{ master_ip_result.stdout }}"
+
+    - name: 🔷 Étape 2 : Créer le dossier ~/task sur le Master
+      shell: ssh ubuntu@{{ master_ip }} "mkdir -p {{ remote_task_dir }}"
+      delegate_to: localhost
+
+    - name: 🔷 Étape 2.5 : Générer une paire de clés SSH sur le Master (si absente)
+      shell: |
+        ssh ubuntu@{{ master_ip }} '
+        if [[ ! -f ~/.ssh/id_rsa ]]; then
+          ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+        else
+          echo "Clé SSH déjà existante"
+        fi'
+      delegate_to: localhost
+
+    - name: 🔷 Étape 2.6 : Récupération de la clé privée/public du Master
+      block:
+        - name: 📥 Récupérer la clé privée
+          shell: scp ubuntu@{{ master_ip }}:~/.ssh/id_rsa {{ ssh_private_key_path }}
+          delegate_to: localhost
+
+        - name: 📥 Récupérer la clé publique
+          shell: scp ubuntu@{{ master_ip }}:~/.ssh/id_rsa.pub {{ ssh_public_key_path }}
+          delegate_to: localhost
+
+        - name: 🔒 Donner les bons droits à la clé privée
+          file:
+            path: "{{ ssh_private_key_path }}"
+            mode: '0600'
+          delegate_to: localhost
+
+    - name: 🔷 Étape 3 : Créer le dossier application sur le Master
+      shell: ssh ubuntu@{{ master_ip }} "mkdir -p {{ remote_task_dir }}/application"
+      delegate_to: localhost
+
+    - name: 🔷 Étape 3.1 : Copier les fichiers hosts.ini et ansible.yml vers le Master
+      shell: scp hosts.ini ansible.yml ubuntu@{{ master_ip }}:{{ remote_task_dir }}
+      delegate_to: localhost
+
+    - name: 🔷 Étape 3.2 : Copier le dossier application/ vers le Master
+      shell: scp -r application/* ubuntu@{{ master_ip }}:{{ remote_task_dir }}/application/
+      delegate_to: localhost
+
+    - name: 🔷 Étape 4 : Distribution de la clé publique du Master vers tous les hôtes
+      shell: |
+        ip=$(echo "{{ item }}" | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p')
+        user=$(echo "{{ item }}" | sed -n 's/.*ansible_user=\([^ ]*\).*/\1/p')
+        user=${user:-ubuntu}
+        if [[ -n "$ip" ]]; then
+          ssh-copy-id -i {{ ssh_public_key_path }} -o StrictHostKeyChecking=no "$user@$ip" || echo "❌ Échec pour $ip"
+        fi
+      with_lines: cat hosts.ini
+      delegate_to: localhost
+
+    - name: 🔷 Étape 5 : Installation d'Ansible sur le Master (si manquant)
+      shell: |
+        ssh ubuntu@{{ master_ip }} '
+        if ! command -v ansible-playbook >/dev/null; then
+          sudo apt update -qq
+          sudo apt install -yqq software-properties-common
+          sudo add-apt-repository --yes --update ppa:ansible/ansible
+          sudo apt install -yqq ansible
+        else
+          echo "✅ Ansible déjà installé"
+        fi'
+      delegate_to: localhost
+
+    - name: 🧹 Étape 6 : Nettoyage des clés SSH récupérées
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "{{ ssh_private_key_path }}"
+        - "{{ ssh_public_key_path }}"
+      delegate_to: localhost
