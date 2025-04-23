@@ -2,10 +2,6 @@ provider "aws" {
   region = "eu-north-1"
 }
 
-resource "random_id" "suffix" {
-  byte_length = 4
-}
-
 resource "aws_vpc" "main_vpc" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -34,12 +30,10 @@ resource "aws_internet_gateway" "igw" {
 
 resource "aws_route_table" "main_rt" {
   vpc_id = aws_vpc.main_vpc.id
-
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.igw.id
   }
-
   tags = {
     Name = "MainRouteTable"
   }
@@ -83,28 +77,61 @@ resource "aws_security_group" "main_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Jenkins
+  }
+
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Grafana
+  }
+
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Prometheus
+  }
+
+  ingress {
+    from_port   = 30050
+    to_port     = 30050
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Nextcloud NodePort
+  }
+
   tags = {
     Name = "MainSecurityGroup"
   }
 }
 
 resource "aws_key_pair" "deployer_key" {
-  key_name   = "deployer"
-  public_key = file("${path.module}/ssh/my_key.pub")
+  key_name   = "my_key"
+  public_key = file("/home/adminsys/.ssh/my_key.pub")
+  tags = {
+    Name = "DeployerKey"
+  }
 }
 
 resource "aws_s3_bucket" "nextcloud_data" {
   bucket = "nextcloud-data-${random_id.suffix.hex}"
-
   tags = {
     Name        = "NextcloudData"
     Environment = "prod"
   }
 }
 
-resource "aws_iam_role" "ec2_access_role" {
-  name = "ec2_access"
+resource "random_id" "suffix" {
+  byte_length = 4
+}
 
+resource "aws_iam_role" "ec2_access_role" {
+  name               = "ec2_access"
   assume_role_policy = <<EOF
 {
   "Version": "2012-10-17",
@@ -120,8 +147,7 @@ EOF
 resource "aws_iam_policy" "s3_access_policy" {
   name        = "S3AccessPolicy"
   description = "Policy for EC2 to access S3"
-
-  policy = <<EOF
+  policy      = <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [{
@@ -141,9 +167,9 @@ resource "aws_iam_role_policy_attachment" "s3_access_attachment" {
   policy_arn = aws_iam_policy.s3_access_policy.arn
 }
 
-# ✅ Utilise un data source pour éviter le conflit de création
-data "aws_iam_instance_profile" "existing_profile" {
+resource "aws_iam_instance_profile" "s3_access_profile" {
   name = "S3AccessProfile"
+  role = aws_iam_role.ec2_access_role.name
 }
 
 resource "aws_instance" "project" {
@@ -152,11 +178,10 @@ resource "aws_instance" "project" {
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.main_subnet.id
   private_ip                  = "${var.private_ip_base}.${count.index + 10}"
-  associate_public_ip_address = true
+  associate_public_ip_address = count.index == 0 ? true : false
   vpc_security_group_ids      = [aws_security_group.main_sg.id]
   key_name                    = aws_key_pair.deployer_key.key_name
-  iam_instance_profile        = data.aws_iam_instance_profile.existing_profile.name
-
+  iam_instance_profile        = aws_iam_instance_profile.s3_access_profile.name
   tags = {
     Name = "${var.instance_names[count.index]}"
   }
