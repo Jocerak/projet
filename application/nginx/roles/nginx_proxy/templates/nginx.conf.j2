@@ -1,0 +1,57 @@
+events {}
+
+http {
+  server {
+    listen 80;
+    server_name nextcloud.local jenkins.local grafana.local;
+    return 301 https://$host$request_uri;
+  }
+
+  server {
+    listen 443 ssl;
+    server_name nextcloud.local;
+
+    ssl_certificate     /etc/nginx/certs/nextcloud.local/nextcloud.local.crt;
+    ssl_certificate_key /etc/nginx/certs/nextcloud.local/nextcloud.local.key;
+
+    location / {
+      proxy_pass http://<PRIVATE_IP>:30050;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+
+  server {
+    listen 443 ssl;
+    server_name jenkins.local;
+
+    ssl_certificate     /etc/nginx/certs/jenkins.local/jenkins.local.crt;
+    ssl_certificate_key /etc/nginx/certs/jenkins.local/jenkins.local.key;
+
+    location / {
+      proxy_pass http://<PRIVATE_IP>:8080;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+
+  server {
+    listen 443 ssl;
+    server_name grafana.local;
+
+    ssl_certificate     /etc/nginx/certs/grafana.local/grafana.local.crt;
+    ssl_certificate_key /etc/nginx/certs/grafana.local/grafana.local.key;
+
+    location / {
+      proxy_pass http://<PRIVATE_IP>:3000;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+}
