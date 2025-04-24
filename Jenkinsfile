@@ -39,29 +39,5 @@ pipeline {
         }
     }
 
-    post {
-        success {
-            echo '✅ Infra déployée avec succès'
-            slackSend(
-                channel: '#devops',
-                color: 'good',
-                message: "✅ Jenkins - Terraform apply réussi pour *${env.JOB_NAME}* (<${env.BUILD_URL}|Build #${env.BUILD_NUMBER}>)"
-            )
-            mail to: 'jocerak@yahoo.com',
-                 subject: "✅ SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: "L'infrastructure a été déployée avec succès.\nVoir le détail : ${env.BUILD_URL}"
-        }
-        failure {
-            echo '❌ Échec du pipeline'
-            slackSend(
-                channel: '#devops',
-                color: 'danger',
-                message: "❌ Jenkins - Échec du déploiement Terraform pour *${env.JOB_NAME}* (<${env.BUILD_URL}|Build #${env.BUILD_NUMBER}>)"
-            )
-            mail to: 'tonmail@example.com',
-                 subject: "❌ FAILURE - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: "Le pipeline a échoué.\nVoir les logs ici : ${env.BUILD_URL}"
-        }
-    }
+    
 }
-
