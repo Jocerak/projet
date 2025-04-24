@@ -1,27 +1,58 @@
-- name: Déploiement Jenkins dans Docker
+---
+- name: "Installation de Jenkins en natif (avec Java et ouverture de port)"
   hosts: Pipeline
   become: true
-
   tasks:
-    - name: Installer Docker
-      ansible.builtin.include_role:
-        name: geerlingguy.docker
 
-    - name: Créer le volume Jenkins
-      community.docker.docker_volume:
-        name: jenkins_data
+    - name: "Mettre à jour les paquets"
+      apt:
+        update_cache: yes
 
-    - name: Lancer le conteneur Jenkins
-      community.docker.docker_container:
+    - name: "Installer Java (OpenJDK 17)"
+      apt:
+        name: openjdk-17-jdk
+        state: present
+
+    - name: "Télécharger la clé GPG de Jenkins"
+      get_url:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+        mode: '0644'
+
+    - name: "Ajouter le dépôt Jenkins à APT"
+      copy:
+        dest: /etc/apt/sources.list.d/jenkins.list
+        content: |
+          deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/
+        mode: '0644'
+
+    - name: "Re-mettre à jour les paquets (avec le dépôt Jenkins)"
+      apt:
+        update_cache: yes
+
+    - name: "Installer Jenkins"
+      apt:
         name: jenkins
-        image: jenkins/jenkins:lts-jdk17
-        ports:
-          - "8080:8080"
-          - "50000:50000"
-        volumes:
-          - jenkins_data:/var/jenkins_home
-          - /var/run/docker.sock:/var/run/docker.sock
-        env:
-          JENKINS_ADMIN_ID: admin
-          JENKINS_ADMIN_PASSWORD: "secret123!"
-        restart_policy: unless-stopped
+        state: present
+
+    - name: "Activer et démarrer Jenkins"
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: "Vérifier si UFW est installé"
+      apt:
+        name: ufw
+        state: present
+
+    - name: "Autoriser le port 8080 (Jenkins)"
+      ufw:
+        rule: allow
+        port: '8080'
+        proto: tcp
+
+    - name: "Activer UFW (si non actif)"
+      ufw:
+        state: enabled
+        policy: allow

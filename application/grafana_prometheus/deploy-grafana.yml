@@ -1,0 +1,54 @@
+---
+- name: Déploiement de Grafana
+  hosts: Monitoring
+  become: yes
+  vars:
+    grafana_version: latest
+    grafana_port: 3000
+    grafana_data_volume: grafana-storage
+
+  tasks:
+    - name: Créer le répertoire de provisioning Grafana
+      file:
+        path: /opt/grafana/provisioning/datasources/
+        state: directory
+        mode: '0755'
+        recurse: yes
+
+    - name: Créer le fichier de configuration des datasources Grafana (Prometheus)
+      copy:
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://prometheus:9090
+              isDefault: true
+              editable: false
+        dest: /opt/grafana/provisioning/datasources/datasource.yml
+        mode: '0644'
+
+    - name: Créer le volume Docker pour Grafana
+      docker_volume:
+        name: "{{ grafana_data_volume }}"
+        state: present
+
+    - name: Créer le réseau Docker pour monitoring (si non existant)
+      docker_network:
+        name: monitoring
+        state: present
+
+    - name: Lancer le conteneur Grafana avec provisioning activé
+      docker_container:
+        name: grafana
+        image: "grafana/grafana-enterprise:{{ grafana_version }}"
+        ports:
+          - "{{ grafana_port }}:3000"
+        volumes:
+          - "{{ grafana_data_volume }}:/var/lib/grafana"
+          - "/opt/grafana/provisioning:/etc/grafana/provisioning"
+        restart_policy: unless-stopped
+        state: started
+        networks:
+          - name: monitoring

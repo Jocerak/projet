@@ -1,6 +1,6 @@
 - name: Déploiement Grafana OTEL-LGTM
-  hosts: Supervision
-  become: true
+  hosts: local
+  become: yes
 
   tasks:
     - name: Lancer le conteneur OTEL-LGTM
@@ -11,6 +11,7 @@
           - "3000:3000"   # Grafana
           - "4317:4317"   # OTel gRPC
           - "4318:4318"   # OTel HTTP
+          - "9090:9090"
         volumes:
           - "otel_data:/var/lib/grafana"
         restart_policy: unless-stopped

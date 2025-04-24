@@ -1,0 +1,72 @@
+---
+- name: Rollback des déploiements Prometheus et Grafana
+  hosts: Monitoring
+  become: yes
+  vars:
+    prometheus_data_volume: prometheus-data
+    grafana_data_volume: grafana-storage
+    
+  tasks:
+    # Arrêt et suppression des conteneurs
+    - name: Arrêter et supprimer le conteneur Prometheus
+      docker_container:
+        name: prometheus
+        state: absent
+        force_kill: yes
+      ignore_errors: yes
+      
+    - name: Arrêter et supprimer le conteneur Grafana
+      docker_container:
+        name: grafana
+        state: absent
+        force_kill: yes
+      ignore_errors: yes
+      
+    # Nettoyage des volumes Docker
+    - name: Supprimer le volume Prometheus
+      docker_volume:
+        name: "{{ prometheus_data_volume }}"
+        state: absent
+      ignore_errors: yes
+      
+    - name: Supprimer le volume Grafana
+      docker_volume:
+        name: "{{ grafana_data_volume }}"
+        state: absent
+      ignore_errors: yes
+      
+    # Nettoyage des répertoires de configuration
+    - name: Supprimer le répertoire de configuration Prometheus
+      file:
+        path: /opt/prometheus
+        state: absent
+      ignore_errors: yes
+      
+    - name: Supprimer le répertoire de configuration Grafana
+      file:
+        path: /opt/grafana
+        state: absent
+      ignore_errors: yes
+        
+    # Vérification du nettoyage
+    - name: Vérifier l'état des conteneurs après suppression
+      command: docker ps -a
+      register: container_status
+      changed_when: false
+      
+    - name: Vérifier l'état des volumes après suppression
+      command: docker volume ls
+      register: volume_status
+      changed_when: false
+      
+    - name: Afficher l'état des conteneurs
+      debug:
+        var: container_status.stdout_lines
+        
+    - name: Afficher l'état des volumes
+      debug:
+        var: volume_status.stdout_lines
+        
+    - name: Message de confirmation
+      debug:
+        msg: "Le rollback de Prometheus et Grafana a été effectué avec succès"

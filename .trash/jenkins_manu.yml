@@ -1,0 +1,485 @@
+---
+# Playbook pour l'installation et la configuration de Jenkins sur AWS
+# Ce playbook installe Jenkins, configure les plugins nécessaires et l'intègre avec AWS, GitHub et Kubernetes
+
+- name: Installation et configuration de Jenkins
+  hosts: Pipeline
+  become: true
+  vars:
+    jenkins_admin_username: admin
+    jenkins_admin_password: admin_password
+    jenkins_url: "http://{{ ansible_host }}:8080"
+    jenkins_home: /var/lib/jenkins
+    jenkins_plugins:
+      - git
+      - github-integration
+      - pipeline
+      - kubernetes
+      - blueocean
+      - docker-workflow
+      - aws-credentials
+      - sonar
+      - prometheus
+      - metrics
+      - configuration-as-code
+      - job-dsl
+      - workflow-aggregator
+      - credentials-binding
+      - ssh-agent
+      - timestamper
+      - ansicolor
+      - matrix-auth
+      - role-strategy
+    aws_region: eu-west-3
+    eks_cluster_name: nextcloud-cluster
+    github_webhook_secret: github_webhook_secret
+    sonarqube_url: "http://{{ hostvars['sonarqube']['ansible_host'] }}:9000"
+    sonarqube_token: sonarqube_token
+
+  tasks:
+    - name: Mise à jour des paquets
+      apt:
+        update_cache: yes
+        upgrade: yes
+      when: ansible_os_family == "ubuntu"
+
+    - name: Installation des dépendances
+      package:
+        name:
+          - openjdk-11-jdk
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - unzip
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Installation des dépendances (Amazon Linux)
+      package:
+        name:
+          - java-11-amazon-corretto
+          - ca-certificates
+          - curl
+          - gnupg
+          - python3-pip
+          - unzip
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ajout de la clé GPG Jenkins
+      apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io.key
+        state: present
+      when: ansible_os_family == "ubuntu"
+
+    - name: Ajout du dépôt Jenkins
+      apt_repository:
+        repo: deb https://pkg.jenkins.io/debian-stable binary/
+        state: present
+      when: ansible_os_family == "ubuntu"
+
+    - name: Ajout du dépôt Jenkins (Amazon Linux)
+      yum_repository:
+        name: jenkins
+        description: Jenkins YUM repo
+        baseurl: https://pkg.jenkins.io/redhat-stable
+        gpgcheck: yes
+        gpgkey: https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+      when: ansible_os_family == "RedHat"
+
+    - name: Installation de Jenkins
+      package:
+        name: jenkins
+        state: present
+
+    - name: Démarrage du service Jenkins
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: Attente du démarrage de Jenkins
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 300
+
+    - name: Récupération du mot de passe initial Jenkins
+      shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_initial_password
+      changed_when: false
+
+    - name: Installation de pip et des modules Python requis
+      pip:
+        name:
+          - python-jenkins
+          - boto3
+          - kubernetes
+        state: present
+
+    - name: Installation des plugins Jenkins
+      jenkins_plugin:
+        name: "{{ item }}"
+        jenkins_home: "{{ jenkins_home }}"
+        url_username: admin
+        url_password: "{{ jenkins_initial_password.stdout }}"
+        url: "{{ jenkins_url }}"
+        with_dependencies: yes
+      with_items: "{{ jenkins_plugins }}"
+      register: plugin_result
+      until: plugin_result is success
+      retries: 3
+      delay: 10
+
+    - name: Redémarrage de Jenkins après installation des plugins
+      systemd:
+        name: jenkins
+        state: restarted
+
+    - name: Attente du redémarrage de Jenkins
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 300
+
+    - name: Installation de kubectl
+      get_url:
+        url: https://storage.googleapis.com/kubernetes-release/release/v1.27.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Installation de AWS CLI
+      pip:
+        name: awscli
+        state: present
+
+    - name: Création du répertoire .kube
+      file:
+        path: "{{ jenkins_home }}/.kube"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
+
+    - name: Configuration de kubectl pour EKS
+      shell: |
+        aws eks update-kubeconfig --region {{ aws_region }} --name {{ eks_cluster_name }} --kubeconfig {{ jenkins_home }}/.kube/config
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      become_user: jenkins
+
+    - name: Modification des permissions du fichier kubeconfig
+      file:
+        path: "{{ jenkins_home }}/.kube/config"
+        owner: jenkins
+        group: jenkins
+        mode: '0600'
+
+    - name: Création du script de configuration Jenkins
+      copy:
+        dest: /tmp/jenkins_config.groovy
+        content: |
+          import jenkins.model.*
+          import hudson.security.*
+          import jenkins.install.*
+          import hudson.util.*
+          import jenkins.security.s2m.AdminWhitelistRule
+          import hudson.security.csrf.DefaultCrumbIssuer
+          import com.cloudbees.plugins.credentials.*
+          import com.cloudbees.plugins.credentials.common.*
+          import com.cloudbees.plugins.credentials.domains.*
+          import com.cloudbees.plugins.credentials.impl.*
+          import com.cloudbees.jenkins.plugins.awscredentials.*
+          import org.jenkinsci.plugins.plaincredentials.impl.*
+          import hudson.plugins.sonar.*
+          import hudson.plugins.sonar.model.*
+          import hudson.tools.*
+          import hudson.plugins.git.*
+          import org.jenkinsci.plugins.workflow.libs.*
+          import jenkins.plugins.git.*
+
+          // Désactivation de l'assistant de configuration
+          def instance = Jenkins.getInstance()
+          instance.setInstallState(InstallState.INITIAL_SETUP_COMPLETED)
+
+          // Configuration de la sécurité
+          def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+          hudsonRealm.createAccount("{{ jenkins_admin_username }}", "{{ jenkins_admin_password }}")
+          instance.setSecurityRealm(hudsonRealm)
+
+          def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+          strategy.setAllowAnonymousRead(false)
+          instance.setAuthorizationStrategy(strategy)
+
+          // Activation du CSRF
+          instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+
+          // Configuration des credentials AWS
+          def domain = Domain.global()
+          def store = Jenkins.instance.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
+
+          // AWS Credentials
+          def awsCredentials = new AWSCredentialsImpl(
+            CredentialsScope.GLOBAL,
+            "aws-credentials",
+            "AWS Credentials",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY"
+          )
+          store.addCredentials(domain, awsCredentials)
+
+          // GitHub Webhook Secret
+          def githubWebhookSecret = new StringCredentialsImpl(
+            CredentialsScope.GLOBAL,
+            "github-webhook-secret",
+            "GitHub Webhook Secret",
+            Secret.fromString("{{ github_webhook_secret }}")
+          )
+          store.addCredentials(domain, githubWebhookSecret)
+
+          // Configuration de SonarQube
+          def sonarInstallation = new SonarInstallation(
+            "SonarQube",
+            "{{ sonarqube_url }}",
+            "{{ sonarqube_token }}",
+            "",
+            "",
+            new TriggersConfig(),
+            ""
+          )
+          def sonarDescriptor = instance.getDescriptor(SonarGlobalConfiguration.class)
+          sonarDescriptor.setInstallations(sonarInstallation)
+
+          // Configuration de la Global Pipeline Library
+          def globalLibraries = instance.getDescriptor("org.jenkinsci.plugins.workflow.libs.GlobalLibraries")
+          def libraries = new ArrayList<LibraryConfiguration>()
+          def scm = new SCMSourceRetriever(new GitSCMSource(
+            "jenkins-shared-library",
+            "https://github.com/your-org/jenkins-shared-library.git",
+            "",
+            "*",
+            "",
+            false
+          ))
+          def library = new LibraryConfiguration("jenkins-shared-library", scm)
+          library.setDefaultVersion("main")
+          library.setImplicit(false)
+          library.setAllowVersionOverride(true)
+          libraries.add(library)
+          globalLibraries.setLibraries(libraries)
+
+          // Sauvegarde de la configuration
+          instance.save()
+
+    - name: Exécution du script de configuration Jenkins
+      shell: |
+        java -jar {{ jenkins_home }}/jenkins-cli.jar -s {{ jenkins_url }} -auth {{ jenkins_admin_username }}:{{ jenkins_admin_password }} groovy = < /tmp/jenkins_config.groovy
+      register: jenkins_config_result
+      failed_when: false
+      changed_when: jenkins_config_result.rc == 0
+      retries: 5
+      delay: 10
+      until: jenkins_config_result.rc == 0
+
+    - name: Création du job de seed pour les pipelines
+      copy:
+        dest: /tmp/seed_job.xml
+        content: |
+          <?xml version='1.1' encoding='UTF-8'?>
+          <project>
+            <description>Job pour créer les pipelines CI/CD</description>
+            <keepDependencies>false</keepDependencies>
+            <properties/>
+            <scm class="hudson.plugins.git.GitSCM">
+              <configVersion>2</configVersion>
+              <userRemoteConfigs>
+                <hudson.plugins.git.UserRemoteConfig>
+                  <url>https://github.com/your-org/jenkins-jobs.git</url>
+                </hudson.plugins.git.UserRemoteConfig>
+              </userRemoteConfigs>
+              <branches>
+                <hudson.plugins.git.BranchSpec>
+                  <name>*/main</name>
+                </hudson.plugins.git.BranchSpec>
+              </branches>
+              <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+              <submoduleCfg class="empty-list"/>
+              <extensions/>
+            </scm>
+            <canRoam>true</canRoam>
+            <disabled>false</disabled>
+            <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+            <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+            <triggers>
+              <hudson.triggers.SCMTrigger>
+                <spec>H/15 * * * *</spec>
+                <ignorePostCommitHooks>false</ignorePostCommitHooks>
+              </hudson.triggers.SCMTrigger>
+            </triggers>
+            <concurrentBuild>false</concurrentBuild>
+            <builders>
+              <javaposse.jobdsl.plugin.ExecuteDslScripts>
+                <targets>jobs/*.groovy</targets>
+                <usingScriptText>false</usingScriptText>
+                <sandbox>false</sandbox>
+                <ignoreExisting>false</ignoreExisting>
+                <ignoreMissingFiles>false</ignoreMissingFiles>
+                <failOnMissingPlugin>false</failOnMissingPlugin>
+                <failOnSeedCollision>false</failOnSeedCollision>
+                <unstableOnDeprecation>false</unstableOnDeprecation>
+                <removedJobAction>IGNORE</removedJobAction>
+                <removedViewAction>IGNORE</removedViewAction>
+                <removedConfigFilesAction>IGNORE</removedConfigFilesAction>
+                <lookupStrategy>JENKINS_ROOT</lookupStrategy>
+              </javaposse.jobdsl.plugin.ExecuteDslScripts>
+            </builders>
+            <publishers/>
+            <buildWrappers/>
+          </project>
+
+    - name: Création du job seed
+      shell: |
+        curl -X POST -H "Content-Type:application/xml" -d @/tmp/seed_job.xml "{{ jenkins_url }}/createItem?name=seed-job" --user {{ jenkins_admin_username }}:{{ jenkins_admin_password }}
+      register: create_seed_job
+      failed_when: create_seed_job.rc != 0 and "Error 400" not in create_seed_job.stderr
+
+    - name: Configuration du webhook GitHub
+      uri:
+        url: "{{ jenkins_url }}/github-webhook/"
+        method: POST
+        user: "{{ jenkins_admin_username }}"
+        password: "{{ jenkins_admin_password }}"
+        force_basic_auth: yes
+        status_code: 200,302
+      register: webhook_result
+      failed_when: false
+
+    - name: Installation de Prometheus Node Exporter
+      package:
+        name: prometheus-node-exporter
+        state: present
+      when: ansible_os_family == "ubuntu"
+
+    - name: Installation de Prometheus Node Exporter (Amazon Linux)
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v1.5.0/node_exporter-1.5.0.linux-amd64.tar.gz
+        dest: /tmp/node_exporter.tar.gz
+      when: ansible_os_family == "RedHat"
+
+    - name: Extraction de Node Exporter (Amazon Linux)
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Déplacement de Node Exporter (Amazon Linux)
+      copy:
+        src: /tmp/node_exporter-1.5.0.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        remote_src: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Création du service Node Exporter (Amazon Linux)
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      when: ansible_os_family == "RedHat"
+
+    - name: Démarrage du service Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Démarrage du service Node Exporter (ubuntu)
+      systemd:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes
+      when: ansible_os_family == "ubuntu"
+
+    - name: Création du fichier de configuration pour le monitoring Jenkins
+      copy:
+        dest: "{{ jenkins_home }}/prometheus.yml"
+        owner: jenkins
+        group: jenkins
+        mode: '0644'
+        content: |
+          # Configuration pour exposer les métriques Jenkins à Prometheus
+          jenkins:
+            enabled: true
+            # Intervalle de collecte des métriques en secondes
+            interval: 60
+            # Chemin pour les métriques
+            path: /prometheus
+            # Métriques à collecter
+            metrics:
+              - jenkins.queue.size
+              - jenkins.queue.buildable
+              - jenkins.queue.pending
+              - jenkins.queue.stuck
+              - jenkins.queue.blocked
+              - jenkins.executor.count
+              - jenkins.executor.free
+              - jenkins.executor.used
+              - jenkins.executor.in_use
+              - jenkins.job.count
+              - jenkins.job.scheduled
+              - jenkins.job.queuing
+              - jenkins.job.building
+              - jenkins.job.success
+              - jenkins.job.unstable
+              - jenkins.job.failure
+              - jenkins.job.aborted
+              - jenkins.job.duration
+              - jenkins.node.count
+              - jenkins.node.offline
+              - jenkins.node.online
+              - jenkins.plugin.count
+              - jenkins.project.count
+              - jenkins.view.count
+
+    - name: Redémarrage de Jenkins pour appliquer la configuration
+      systemd:
+        name: jenkins
+        state: restarted
+
+    - name: Attente du redémarrage de Jenkins
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 300
+
+    - name: Vérification de l'installation
+      uri:
+        url: "{{ jenkins_url }}/api/json"
+        method: GET
+        user: "{{ jenkins_admin_username }}"
+        password: "{{ jenkins_admin_password }}"
+        force_basic_auth: yes
+        return_content: yes
+      register: jenkins_status
+      failed_when: jenkins_status.status != 200
+
+    - name: Affichage du statut de Jenkins
+      debug:
+        msg: "Jenkins est correctement installé et configuré à l'adresse {{ jenkins_url }}"

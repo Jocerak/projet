@@ -1,0 +1,37 @@
+---
+- name: Rollback du déploiement Grafana OTEL-LGTM
+  hosts: local
+  become: yes
+
+  tasks:
+    - name: Arrêter le conteneur OTEL-LGTM
+      community.docker.docker_container:
+        name: otel-lgtm
+        state: stopped
+      ignore_errors: yes
+
+    - name: Supprimer le conteneur OTEL-LGTM
+      community.docker.docker_container:
+        name: otel-lgtm
+        state: absent
+      ignore_errors: yes
+
+    - name: Vérifier si le volume existe
+      command: docker volume inspect otel_data
+      register: volume_status
+      failed_when: false
+      changed_when: false
+
+    - name: Supprimer le volume otel_data (optionnel)
+      command: docker volume rm otel_data
+      when: volume_status.rc == 0
+      ignore_errors: yes
+
+    - name: Vérifier le statut après suppression
+      command: docker ps -a -f name=otel-lgtm
+      register: container_status
+      changed_when: false
+
+    - name: Afficher le résultat
+      debug:
+        var: container_status.stdout_lines

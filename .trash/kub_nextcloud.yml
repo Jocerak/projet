@@ -13,8 +13,8 @@ metadata:
   namespace: nextcloud
 type: Opaque
 stringData:
-  MYSQL_ROOT_PASSWORD: "root"
-  MYSQL_PASSWORD: "root"
+  MYSQL_ROOT_PASSWORD: "votre_mot_de_passe_root"
+  MYSQL_PASSWORD: "votre_mot_de_passe_utilisateur"
   MYSQL_DATABASE: "nextcloud"
   MYSQL_USER: "nextcloud"
 ---
@@ -174,3 +174,52 @@ spec:
       targetPort: 80
       nodePort: 30050
   type: NodePort
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud-exporter
+  namespace: nextcloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nextcloud-exporter
+  template:
+    metadata:
+      labels:
+        app: nextcloud-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9205"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: nextcloud-exporter
+          image: xperimental/nextcloud-exporter:v0.3.0
+          ports:
+            - containerPort: 9205
+          env:
+            - name: NEXTCLOUD_SERVER
+              value: "http://nextcloud-service"
+            - name: NEXTCLOUD_USERNAME
+              value: "admin"
+            - name: NEXTCLOUD_PASSWORD
+              value: "linux"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-exporter
+  namespace: nextcloud
+spec:
+  selector:
+    app: nextcloud-exporter
+  ports:
+    - protocol: TCP
+      port: 9205
+      targetPort: 9205
+  type: ClusterIP

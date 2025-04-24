@@ -1,0 +1,17 @@
+version: '3.7'
+services:
+  nextcloud-exporter:
+    image: xperimental/nextcloud-exporter:v0.3.0
+    container_name: nextcloud-exporter
+    ports:
+      - "9205:9205"
+    environment:
+      NEXTCLOUD_SERVER: "http://nextcloud-service"
+      NEXTCLOUD_USERNAME: "admin"
+      NEXTCLOUD_PASSWORD: "linux"
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    external: true

@@ -3,7 +3,7 @@
   hosts: Master
   gather_facts: false
   vars:
-    remote_task_path: ~/task
+    remote_task_path: home/ubuntu/task
     local_key_private: ~/.ssh/id_rsa_master
     local_key_public: ~/.ssh/id_rsa_master.pub
 
@@ -24,6 +24,7 @@
         executable: /bin/bash
 
     - name: "🔷 Étape 3 : Copier les fichiers hosts.ini et ansible.yml vers le Master"
+      become: false   
       copy:
         src: "{{ item }}"
         dest: "{{ remote_task_path }}/"
@@ -95,3 +96,52 @@
       loop:
 #       - "{{ local_key_private }}"
         - "{{ local_key_public }}"
+
+    - name: "🛠️ Installation de Docker"
+      become: true
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+
+    - name: "📁 Création du dossier /opt/certs"
+      become: true
+      file:
+        path: /opt/certs
+        state: directory
+        mode: '0755'
+
+    - name: "📄 Copier le script de génération de certificats"
+      become: true
+      copy:
+        src: generate-certs.sh
+        dest: /opt/generate-certs.sh
+        mode: '0755'
+
+    - name: "🔐 Génération des certificats SSL"
+      become: true
+      shell: /opt/generate-certs.sh
+
+    - name: "📄 Copier la configuration NGINX"
+      become: true
+      template:
+        src: nginx.conf.j2
+        dest: /opt/nginx.conf
+
+    - name: "🚀 Déploiement du conteneur NGINX"
+      become: yes
+      docker_container:
+        name: nginx-proxy
+        image: nginx:latest
+        state: started
+        restart_policy: always
+        published_ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - /opt/nginx.conf:/etc/nginx/nginx.conf:ro
+          - /opt/certs:/etc/nginx/certs:ro
+
+    - name: "🌀 Reverse proxy déployé !"
+      debug:
+        msg: "NGINX reverse proxy est maintenant en place sur les ports 80 et 443 ✅"

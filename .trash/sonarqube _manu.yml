@@ -1,0 +1,437 @@
+---
+# Playbook pour l'installation et la configuration de SonarQube sur AWS
+# Ce playbook installe SonarQube, configure la base de données PostgreSQL et l'intègre avec Jenkins
+
+- name: Installation et configuration de SonarQube
+  hosts: sonarqube
+  become: true
+  vars:
+    sonarqube_version: "9.9.0.65466"
+    sonarqube_download_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}.zip"
+    sonarqube_home: /opt/sonarqube
+    sonarqube_user: sonarqube
+    sonarqube_group: sonarqube
+    sonarqube_database_host: "{{ hostvars['sonarqube_db']['ansible_host'] | default(aws_rds_endpoint) }}"
+    sonarqube_database_port: 5432
+    sonarqube_database_name: sonarqube
+    sonarqube_database_username: sonarqube
+    sonarqube_database_password: sonarqube123
+    sonarqube_web_host: 0.0.0.0
+    sonarqube_web_port: 9000
+    sonarqube_web_context: /
+    sonarqube_admin_username: admin
+    sonarqube_admin_password: admin
+    sonarqube_admin_token: sonarqube_token
+    aws_rds_endpoint: "{{ lookup('env', 'SONARQUBE_DB_ENDPOINT') }}"
+    jenkins_url: "http://{{ hostvars['jenkins']['ansible_host'] }}:8080"
+    jenkins_username: admin
+    jenkins_password: admin_password
+    nextcloud_github_repo: "https://github.com/your-org/nextcloud.git"
+
+  tasks:
+    - name: Mise à jour des paquets
+      apt:
+        update_cache: yes
+        upgrade: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Installation des dépendances
+      package:
+        name:
+          - openjdk-11-jdk
+          - unzip
+          - curl
+          - postgresql-client
+          - python3-pip
+          - python3-psycopg2
+          - nodejs
+          - npm
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Installation des dépendances (Amazon Linux)
+      package:
+        name:
+          - java-11-amazon-corretto
+          - unzip
+          - curl
+          - postgresql
+          - python3-pip
+          - nodejs
+          - npm
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Installation de psycopg2 via pip
+      pip:
+        name: psycopg2-binary
+        state: present
+
+    - name: Création de l'utilisateur SonarQube
+      user:
+        name: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        system: yes
+        createhome: no
+        shell: /bin/false
+      register: sonarqube_user_created
+
+    - name: Création du groupe SonarQube si nécessaire
+      group:
+        name: "{{ sonarqube_group }}"
+        system: yes
+        state: present
+      when: sonarqube_user_created is failed
+
+    - name: Création de l'utilisateur SonarQube (retry)
+      user:
+        name: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        system: yes
+        createhome: no
+        shell: /bin/false
+      when: sonarqube_user_created is failed
+
+    - name: Téléchargement de SonarQube
+      get_url:
+        url: "{{ sonarqube_download_url }}"
+        dest: /tmp/sonarqube.zip
+        mode: '0644'
+
+    - name: Création du répertoire d'installation
+      file:
+        path: "{{ sonarqube_home }}"
+        state: directory
+        owner: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        mode: '0755'
+
+    - name: Extraction de SonarQube
+      unarchive:
+        src: /tmp/sonarqube.zip
+        dest: /tmp
+        remote_src: yes
+        creates: "/tmp/sonarqube-{{ sonarqube_version }}"
+
+    - name: Déplacement des fichiers SonarQube
+      shell: "cp -rf /tmp/sonarqube-{{ sonarqube_version }}/* {{ sonarqube_home }}/"
+      args:
+        creates: "{{ sonarqube_home }}/bin"
+
+    - name: Configuration des permissions
+      file:
+        path: "{{ sonarqube_home }}"
+        owner: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        recurse: yes
+
+    - name: Configuration des paramètres système
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      with_items:
+        - { name: 'vm.max_map_count', value: '262144' }
+        - { name: 'fs.file-max', value: '65536' }
+
+    - name: Configuration des limites système pour SonarQube
+      lineinfile:
+        path: /etc/security/limits.conf
+        line: "{{ item }}"
+        state: present
+      with_items:
+        - "{{ sonarqube_user }} soft nofile 65536"
+        - "{{ sonarqube_user }} hard nofile 65536"
+        - "{{ sonarqube_user }} soft nproc 4096"
+        - "{{ sonarqube_user }} hard nproc 4096"
+
+    - name: Configuration de SonarQube
+      template:
+        src: sonar.properties.j2
+        dest: "{{ sonarqube_home }}/conf/sonar.properties"
+        owner: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        mode: '0644'
+      vars:
+        sonar_properties: |
+          # Configuration de la base de données
+          sonar.jdbc.username={{ sonarqube_database_username }}
+          sonar.jdbc.password={{ sonarqube_database_password }}
+          sonar.jdbc.url=jdbc:postgresql://{{ sonarqube_database_host }}:{{ sonarqube_database_port }}/{{ sonarqube_database_name }}
+
+          # Configuration du serveur web
+          sonar.web.host={{ sonarqube_web_host }}
+          sonar.web.port={{ sonarqube_web_port }}
+          sonar.web.context={{ sonarqube_web_context }}
+
+          # Configuration des chemins
+          sonar.path.data={{ sonarqube_home }}/data
+          sonar.path.temp={{ sonarqube_home }}/temp
+
+          # Configuration de l'authentification
+          sonar.auth.jwtBase64Hs256Secret=
+          sonar.auth.github.enabled=true
+          sonar.auth.github.clientId.secured=github_client_id
+          sonar.auth.github.clientSecret.secured=github_client_secret
+          sonar.auth.github.allowUsersToSignUp=true
+          sonar.auth.github.organizations=your-org
+
+          # Configuration du monitoring
+          sonar.web.javaOpts=-Xmx1G -Xms512m -XX:+HeapDumpOnOutOfMemoryError -Dsonar.telemetry.enable=false
+          sonar.ce.javaOpts=-Xmx2G -Xms512m -XX:+HeapDumpOnOutOfMemoryError
+          sonar.search.javaOpts=-Xmx2G -Xms512m -XX:+HeapDumpOnOutOfMemoryError
+
+          # Configuration des plugins
+          sonar.updatecenter.activate=true
+          sonar.plugins.risk.consent=ACCEPTED
+
+    - name: Création du service SonarQube
+      template:
+        src: sonarqube.service.j2
+        dest: /etc/systemd/system/sonarqube.service
+        mode: '0644'
+      vars:
+        service_content: |
+          [Unit]
+          Description=SonarQube service
+          After=network.target network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=forking
+          ExecStart={{ sonarqube_home }}/bin/linux-x86-64/sonar.sh start
+          ExecStop={{ sonarqube_home }}/bin/linux-x86-64/sonar.sh stop
+          User={{ sonarqube_user }}
+          Group={{ sonarqube_group }}
+          Restart=on-failure
+          LimitNOFILE=65536
+          LimitNPROC=4096
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Rechargement de systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Démarrage du service SonarQube
+      systemd:
+        name: sonarqube
+        state: started
+        enabled: yes
+
+    - name: Attente du démarrage de SonarQube
+      wait_for:
+        port: "{{ sonarqube_web_port }}"
+        delay: 30
+        timeout: 300
+
+    - name: Installation de SonarQube Scanner
+      unarchive:
+        src: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.7.0.2747-linux.zip
+        dest: /opt
+        remote_src: yes
+        creates: /opt/sonar-scanner-4.7.0.2747-linux
+
+    - name: Création d'un lien symbolique pour SonarQube Scanner
+      file:
+        src: /opt/sonar-scanner-4.7.0.2747-linux
+        dest: /opt/sonar-scanner
+        state: link
+
+    - name: Ajout de SonarQube Scanner au PATH
+      lineinfile:
+        path: /etc/profile.d/sonarqube.sh
+        line: 'export PATH=$PATH:/opt/sonar-scanner/bin'
+        create: yes
+        mode: '0644'
+
+    - name: Installation de sonarqube-api via npm
+      npm:
+        name: sonarqube-api
+        global: yes
+
+    - name: Création du script de configuration SonarQube
+      copy:
+        dest: /tmp/configure_sonarqube.js
+        mode: '0755'
+        content: |
+          const SonarQubeApi = require('sonarqube-api').default;
+          
+          const sonarqube = new SonarQubeApi({
+            url: 'http://localhost:{{ sonarqube_web_port }}',
+            auth: {
+              username: 'admin',
+              password: 'admin'
+            }
+          });
+          
+          async function configureSonarQube() {
+            try {
+              // Changement du mot de passe admin
+              await sonarqube.post('/api/users/change_password', {
+                login: 'admin',
+                password: '{{ sonarqube_admin_password }}',
+                previousPassword: 'admin'
+              });
+              console.log('Admin password changed successfully');
+              
+              // Création d'un token d'API
+              const tokenResponse = await sonarqube.post('/api/user_tokens/generate', {
+                name: 'jenkins-token',
+                login: 'admin'
+              });
+              console.log('API token created:', tokenResponse.token);
+              
+              // Création d'un projet pour Nextcloud
+              await sonarqube.post('/api/projects/create', {
+                name: 'Nextcloud',
+                project: 'nextcloud',
+                visibility: 'private'
+              });
+              console.log('Nextcloud project created');
+              
+              // Configuration de la Quality Gate
+              await sonarqube.post('/api/qualitygates/create', {
+                name: 'Nextcloud Gate'
+              });
+              console.log('Quality Gate created');
+              
+              // Installation des plugins nécessaires
+              const plugins = [
+                'php',
+                'javascript',
+                'html',
+                'css',
+                'xml',
+                'yaml',
+                'github',
+                'gitlab',
+                'jacoco',
+                'branch'
+              ];
+              
+              for (const plugin of plugins) {
+                try {
+                  await sonarqube.post('/api/plugins/install', {
+                    key: plugin
+                  });
+                  console.log(`Plugin ${plugin} installed`);
+                } catch (error) {
+                  console.log(`Plugin ${plugin} installation failed or already installed`);
+                }
+              }
+              
+              console.log('SonarQube configuration completed');
+            } catch (error) {
+              console.error('Error configuring SonarQube:', error);
+              process.exit(1);
+            }
+          }
+          
+          configureSonarQube();
+
+    - name: Attente supplémentaire pour s'assurer que SonarQube est prêt
+      pause:
+        seconds: 60
+
+    - name: Exécution du script de configuration SonarQube
+      shell: node /tmp/configure_sonarqube.js
+      register: sonarqube_config_result
+      failed_when: false
+      changed_when: sonarqube_config_result.rc == 0
+      retries: 5
+      delay: 30
+      until: sonarqube_config_result.rc == 0
+
+    - name: Installation de Prometheus Node Exporter
+      package:
+        name: prometheus-node-exporter
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Installation de Prometheus Node Exporter (Amazon Linux)
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v1.5.0/node_exporter-1.5.0.linux-amd64.tar.gz
+        dest: /tmp/node_exporter.tar.gz
+      when: ansible_os_family == "RedHat"
+
+    - name: Extraction de Node Exporter (Amazon Linux)
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Déplacement de Node Exporter (Amazon Linux)
+      copy:
+        src: /tmp/node_exporter-1.5.0.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        remote_src: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Création du service Node Exporter (Amazon Linux)
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      when: ansible_os_family == "RedHat"
+
+    - name: Démarrage du service Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Démarrage du service Node Exporter (Debian)
+      systemd:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Installation du plugin SonarQube Prometheus Exporter
+      get_url:
+        url: https://github.com/dmeiners88/sonarqube-prometheus-exporter/releases/download/v1.2.0/sonarqube-prometheus-exporter-1.2.0.jar
+        dest: "{{ sonarqube_home }}/extensions/plugins/sonarqube-prometheus-exporter-1.2.0.jar"
+        owner: "{{ sonarqube_user }}"
+        group: "{{ sonarqube_group }}"
+        mode: '0644'
+
+    - name: Redémarrage de SonarQube pour charger le plugin
+      systemd:
+        name: sonarqube
+        state: restarted
+
+    - name: Attente du redémarrage de SonarQube
+      wait_for:
+        port: "{{ sonarqube_web_port }}"
+        delay: 30
+        timeout: 300
+
+    - name: Vérification de l'installation
+      uri:
+        url: "http://localhost:{{ sonarqube_web_port }}/api/system/status"
+        method: GET
+        return_content: yes
+      register: sonarqube_status
+      failed_when: sonarqube_status.status != 200
+
+    - name: Affichage du statut de SonarQube
+      debug:
+        msg: "SonarQube est correctement installé et configuré à l'adresse http://{{ ansible_host }}:{{ sonarqube_web_port }}"

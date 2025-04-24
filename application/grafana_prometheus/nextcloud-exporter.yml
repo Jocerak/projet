@@ -1,0 +1,33 @@
+---
+- name: Déploiement de Nextcloud Exporter
+  hosts: Monitoring
+  become: yes
+  tasks:
+    - name: Créer le répertoire du projet exporter
+      file:
+        path: /opt/nextcloud-exporter
+        state: directory
+        mode: '0755'
+
+    - name: Créer le fichier docker-compose.yml
+      copy:
+        dest: /opt/nextcloud-exporter/docker-compose.yml
+        content: |
+          version: '3.7'
+          services:
+            nextcloud-exporter:
+              image: xperimental/nextcloud-exporter:v0.3.0
+              container_name: nextcloud-exporter
+              ports:
+                - "9205:9205"
+              environment:
+                NEXTCLOUD_SERVER: "http://172.20.35.153:30050"
+                NEXTCLOUD_USERNAME: "admin"
+                NEXTCLOUD_PASSWORD: "linux"
+      notify: Lancer l'exporter
+
+  handlers:
+    - name: Lancer l'exporter
+      command: docker compose up -d
+      args:
+        chdir: /opt/nextcloud-exporter

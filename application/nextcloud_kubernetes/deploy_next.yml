@@ -6,11 +6,11 @@
     - name: "copier le fichier de deployement"
       copy:
         src: "./kub_nextcloud.yml"
-        dest: "~/ubuntu/kub_nextcloud.yml"
+        dest: "/home/ubuntu/kub_nextcloud.yml"
         mode: '0755'
 
     - name: "executer le deployement"
-      command: "kubectl apply -f ~/ubuntu/kub_nextcloud.yml"
+      command: "kubectl apply -f /home/ubuntu/kub_nextcloud.yml"
 
 
 
