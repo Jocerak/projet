@@ -1,0 +1,39 @@
+pipeline {
+  agent any
+
+  environment {
+    REMOTE_USER = "ubuntu"
+    REMOTE_HOST = "192.168.0.11"
+    REMOTE_DEST = "/home/ubuntu/kub_nextcloud.yml"
+    LOCAL_FILE = "application/nextcloud_kubernetes/kub_nextcloud.yml"
+  }
+
+  stages {
+    stage('📥 Checkout') {
+      steps {
+        git credentialsId: 'github-credentials', url: 'https://github.com/Jocerak/projet.git', branch: 'main'
+      }
+    }
+
+    stage('🚀 Déploiement Nextcloud sur Application (K3s)') {
+      steps {
+        sh """
+          echo '📤 Copie du fichier vers Application'
+          scp -o StrictHostKeyChecking=no $LOCAL_FILE $REMOTE_USER@$REMOTE_HOST:$REMOTE_DEST
+
+          echo '📦 Déploiement avec kubectl'
+          ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST 'kubectl apply -f $REMOTE_DEST'
+        """
+      }
+    }
+  }
+
+  post {
+    success {
+      echo '✅ Nextcloud déployé directement sur Application (K3s)'
+    }
+    failure {
+      echo '❌ Échec du déploiement de Nextcloud'
+    }
+  }
+}
