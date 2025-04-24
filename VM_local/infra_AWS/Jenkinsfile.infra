@@ -1,41 +1,52 @@
 pipeline {
     agent any
-    
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        
-        stage('Build') {
-            steps {
-                sh 'chmod +x ./application/build.sh'
-                sh './application/build.sh'
-            }
-        }
-        
-        stage('Test') {
-            steps {
-                echo 'Exécution des tests...'
-                // Ajoutez ici vos commandes de test
-            }
-        }
-        
-        stage('Deploy') {
-            steps {
-                echo 'Déploiement...'
-                // Ajoutez ici vos commandes de déploiement
-            }
-        }
+
+    environment {
+        TF_VAR_FILE = "terraform.tfvars"
+        INFRA_DIR = "infrastructure" // "." si tes .tf sont à la racine
     }
-    
-    post {
-        success {
-            echo 'Pipeline exécuté avec succès!'
+
+    stages {
+        stage('📥 Cloner le dépôt') {
+            steps {
+                git url: 'https://github.com/Jocerak/projet.git'
+            }
         }
-        failure {
-            echo 'Le pipeline a échoué.'
+
+        stage('🔧 Init Terraform') {
+            steps {
+                dir("${INFRA_DIR}") {
+                    sh 'terraform init'
+                }
+            }
+        }
+
+        stage('🧪 Terraform Plan') {
+            steps {
+                dir("${INFRA_DIR}") {
+                    sh 'terraform plan -var-file="${TF_VAR_FILE}"'
+                }
+            }
+        }
+
+        stage('💾 Sauvegarde du tfstate') {
+            steps {
+                dir("${INFRA_DIR}") {
+                    script {
+                        def timestamp = new Date().format("yyyyMMdd-HHmmss")
+                        sh "cp terraform.tfstate terraform.tfstate.backup-${timestamp} || true"
+                    }
+                }
+            }
+        }
+
+        stage('🚀 Terraform Apply') {
+            steps {
+                input message: "Souhaitez-vous appliquer les modifications Terraform ?"
+                dir("${INFRA_DIR}") {
+                    sh 'terraform apply -auto-approve -var-file="${TF_VAR_FILE}"'
+                }
+            }
         }
     }
 
@@ -64,4 +75,3 @@ pipeline {
         }
     }
 }
-
